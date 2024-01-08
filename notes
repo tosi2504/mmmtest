@@ -1,0 +1,38 @@
+Alright, ladies and gentlemen.
+Let's work through this together, shall we?
+We will build our first main.cu, sgemm.h and cudaerror.h using meson.
+Meson worked great, very happy indeed!
+Didn't even need to specifically import the CUDA module.
+
+Alright, let's talk flops.
+SGEMM : C = a*A*B + b*C;
+A*B: N*N * (A[i,k]*B[k,j]) = N*N*2*N = 2*N^3
+A*B+C: 2*N^3 + N^2
+
+And memory:
+Loads: 3*N^2
+Reads: N^2
+	-> 4*N^2
+
+MEMORY COALESCING:
+I decided to write the kernels in my own way.
+My naive version already kind of deals with the whole coalesced memory access thingy.
+410 MB/s
+
+SHARED MEMORY CACHEBLOCKING:
+This is a weird one.
+We need a loop that walks over the blocks and a loop that walks within the blocks.
+I thought I had understood it, but apparently no. 
+My version is much slower than the coalesced one :/
+Actually, after a lot of debugging:
+	--> 480 MB/s
+Which is still very slow, but I guess thats expected for a flops-bound operation?
+I think I will try the pointer aritmetic magic from the article ... could be neat.
+Actually, it went slower. 
+Let's keep reading the article and then proceed to the next optimisation.
+
+1D BLOCKTILING:
+Uhhh, lets just try to implement it as it is.
+I understand how they are doing it, but not why it inceases performance.
+I will need to calculate that for my own.
+
