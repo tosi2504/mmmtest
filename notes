@@ -10,9 +10,9 @@ A*B: N*N * (A[i,k]*B[k,j]) = N*N*2*N = 2*N^3
 A*B+C: 2*N^3 + N^2
 
 And memory:
-Loads: 3*N^2
-Reads: N^2
-	-> 4*N^2
+Loads : 3*N^2
+Writes: N^2
+		-> 4*N^2
 
 MEMORY COALESCING:
 I decided to write the kernels in my own way.
@@ -35,4 +35,15 @@ Let's keep reading the article and then proceed to the next optimisation.
 Uhhh, lets just try to implement it as it is.
 I understand how they are doing it, but not why it inceases performance.
 I will need to calculate that for my own.
-
+Okay, so it compiles, but returns wrong results. 
+As a matter of fact the results are random ... so most likely a memory access outside of the allocated space.
+They are correct for all ones in the matrix, but not for random numbers.
+This is curious.
+Never mind, it is not correct for all ones.
+Never mind, it is correct now. The last line really screwed me over.
+Alright, the numbers are (N=2048):
+	--> 516 MB/s
+	--> 134 GFLOPS/s
+My notebook gpu has 15.97 TFLOPS/s and 448 GB/s
+I think it might be beneficial to also implement one kernel for variable BM ... lets do that.
+I decided not to do it, since it becomes a bit ugly regarding loading the shared mem

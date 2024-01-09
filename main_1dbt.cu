@@ -36,23 +36,23 @@ void checkMatmul(Matrix & C, const Matrix & A, const Matrix & B) {
 	if (not doBreak) std::cout << "No errors" << std::endl;
 }
 
-constexpr long N = 2048; // 2048;
-constexpr uint blocksize = 32; // length of one side!!!! -> blockDim = blocksize ** 2
-static_assert(N%blocksize == 0);
+constexpr unsigned long N = 2048;
+constexpr uint BN = 64;
+static_assert(N%BN == 0);
+constexpr uint BK = 8;
+static_assert(N%BK == 0);
 int main () {
 	Matrix A(N), B(N), C(N);
-	// A.fill_random(0);
-	A.fill_ones();
+	A.fill_random(0);
 	A.upload();
-	// B.fill_random(1);
-	B.fill_ones();
+	B.fill_random(1);
 	B.upload();
 	C.fill_random(2);
 	C.upload();
 
 
-	dim3 gridDim(N/blocksize, N/blocksize, 1);
-	dim3 blockDim(blocksize*blocksize, 1, 1);
+	dim3 gridDim(N/BN, N/BN, 1);
+	dim3 blockDim(BN*BK, 1, 1);
 
 	float alpha = 1;
 	float beta = 0;
@@ -60,16 +60,14 @@ int main () {
 	std::cout << "STARTED TIMING" << std::endl;
 	timing_start();
 	for (unsigned rep = 0; rep < reps; rep++) {
-		//sgemm_coalesced<float, N, blocksize> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
-		sgemm_sharedmem<float, N, blocksize> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
+		sgemm_1D_blocktiling<float, N, BN, BK> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
 		CLCE();
 		CCE(cudaDeviceSynchronize());
 	}
 	unsigned microsecs = timing_stop();
 	std::cout << "BANDWIDTH (MByte/s): " << sizeof(float)*reps*(4*N*N)/(double)microsecs << std::endl;
-	std::cout << "ARITHETICS (GFLOPS/s) (TODO): " << reps*(2*N*N*N)/((double)microsecs*1000) << std::endl;
+	std::cout << "ARITHETICS (GFLOPS/s) (TODO): " << reps*(2*N*N*N + N*N)/((double)microsecs*1000) << std::endl;
 	CLCE();
-
 
 	// check for correctness
 	C.download();
@@ -77,5 +75,5 @@ int main () {
 	uint j = 456;
 	std::cout << "i: " << i << " j: " << j << std::endl;
 	std::cout << Matrix::matmul(A, B, i, j) << " <---> " << C.get(i,j) << std::endl;
-	// checkMatrix(C, A, B);
+	// checkMatmul(C, A, B);
 }
