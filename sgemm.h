@@ -135,13 +135,16 @@ __global__ void sgemm_1D_blocktiling(T * C, const T * A, const T * B, T alpha, T
 template<class T, uint N, uint BN, uint BK, uint TN>
 __global__ void sgemm_2D_blocktiling(T * C, const T * A, const T * B, T alpha, T beta) {
 	static_assert(BN%TN == 0);
-	constexpr uint numThreads = (BN*BN)/(TN*TN); // in our case maybe 
+	constexpr uint numThreads = (BN*BN)/(TN*TN); 
 	static_assert(numThreads%BK == 0); // for SMEM loading of A: guaranteeing rectangular load tile
 	static_assert(numThreads%BN == 0); // for SMEM loading of B
 	static_assert((BN*BK)%numThreads == 0); // for SMEM loading: guaranteeing no overloading
 
 	const uint cRow = blockIdx.y;
 	const uint cCol = blockIdx.x;
+
+	constexpr uint offsetStrideA = numThreads/BK;
+	constexpr uint offsetStrideB = numThreads/BN;
 
 	const uint threadRow = threadIdx.x / (BN/TN);
 	const uint threadCol = threadIdx.x % (BN/TN);
@@ -156,7 +159,7 @@ __global__ void sgemm_2D_blocktiling(T * C, const T * A, const T * B, T alpha, T
 	__shared__ T sB[BK*BN];
 
 	// allocate result array (in registers)
-	T results[TN*TN] = {0.0}; 
+	T results[TN*TN] = {0.0};
 
 	// allocate register caches
 	T regACol[TN];
@@ -165,21 +168,19 @@ __global__ void sgemm_2D_blocktiling(T * C, const T * A, const T * B, T alpha, T
 	// outer k loop
 	for (uint k = 0; k < N; k+=BK) {
 		// need to fill shared memory
-		for (uint offset = 0; offset < BN; offset += numThreads/BN) {
-			sA[threadIdx.x + offset*BN] = A[(threadIdx.x/BN + offset)*N + threadIdx.x%BN];
+		for (uint offset = 0; offset < BN; offset += offsetStrideA) {
+			sA[threadIdx.x + offset*BK] = A[(threadIdx.x/BK + offset)*N + threadIdx.x%BK];
 		}
-		for (uint offset = 0; offset < BK; offset += numThreads/BK) {
-			sB[threadIdx.x + offset*BK] = B[(threadIdx.x/BK + offset)*N + threadIdx.x%BK];
+		for (uint offset = 0; offset < BK; offset += offsetStrideB) {
+			sB[threadIdx.x + offset*BN] = B[(threadIdx.x/BN + offset)*N + threadIdx.x%BN];
 		}
 		__syncthreads();
 
 		// advance pointers
-		A += BN;
-		B += BN*N;
+		A += BK;
+		B += BK*N;
 
 		// inner k loop
-		// TODO: CONTINUE HERE
-		// TODO: explicit registry loading ;)
 		for (uint delta_k = 0; delta_k < BK; delta_k++) {
 			// populate registries to save smem accesses
 			for (uint resIdxRow = 0; resIdxRow < TN; resIdxRow++) {
@@ -188,19 +189,115 @@ __global__ void sgemm_2D_blocktiling(T * C, const T * A, const T * B, T alpha, T
 			for (uint resIdxCol = 0; resIdxCol < TN; resIdxCol++) {
 				regBRow[resIdxCol] = sB[delta_k*BN + threadCol*TN + resIdxCol];
 			}
-			for (uint resIdxRow = 0; resIdxRow < N; resIdxRow+=TN) {
-				for (uint resIdxCol = 0; resIdxCol < N; resIdxCol++) {
+			for (uint resIdxRow = 0; resIdxRow < TN; resIdxRow++) {
+				for (uint resIdxCol = 0; resIdxCol < TN; resIdxCol++) {
 					results[resIdxRow*TN+resIdxCol] += regACol[resIdxRow] * regBRow[resIdxCol];
 				}
 			}
 		}
+		__syncthreads();
 	}
 	
 	// write results into C
-	for (uint resIdxRow = 0; resIdxRow < N; resIdxRow+=TN) {
-		for (uint resIdxCol = 0; resIdxCol < N; resIdxCol++) {
+	for (uint resIdxRow = 0; resIdxRow < TN; resIdxRow++) {
+		for (uint resIdxCol = 0; resIdxCol < TN; resIdxCol++) {
 			const uint cIdx = (threadRow*TN + resIdxRow)*N + threadCol*TN + resIdxCol;
 			C[cIdx] = alpha * results[resIdxRow*TN + resIdxCol] + beta*C[cIdx];
+		}
+	}
+}
+
+template<class T, uint N, uint BN, uint BK, uint TN>
+__global__ void sgemm_vectorized(T * C, const T * A, const T * B, T alpha, T beta) {
+	static_assert(BN%TN == 0);
+	constexpr uint numThreads = (BN*BN)/(TN*TN); 
+	static_assert(numThreads%BK == 0); // for SMEM loading of A: guaranteeing rectangular load tile
+	static_assert(numThreads%BN == 0); // for SMEM loading of B
+	static_assert((BN*BK)%(numThreads*4) == 0); // for SMEM loading: guaranteeing no overloading
+	// "*4" bc each thread now loads float4
+	static_assert(BN%4 == 0); // else the vectorized float fails bc it "overshoots"
+	static_assert(BK%4 == 0);
+	static_assert(TN%4 == 0); // for vectorized stores into C in GMEM from registers
+
+	const uint cRow = blockIdx.y;
+	const uint cCol = blockIdx.x;
+
+	constexpr uint offsetStrideA = (numThreads*4)/BK;
+	constexpr uint offsetStrideB = (numThreads*4)/BN;
+	// "*4" bc each thread now loads float4
+
+	const uint threadRow = threadIdx.x / (BN/TN);
+	const uint threadCol = threadIdx.x % (BN/TN);
+
+	const uint threadIdx4 = threadIdx.x*4;
+
+	// advance pointers
+	B += cCol*BN;
+	A += cRow*BN*N;
+	C += cRow*BN*N + cCol*BN;
+
+	// allocate shared memory
+	__shared__ T sA_T[BK*BN]; // sA is now transposed
+	__shared__ T sB[BK*BN];
+
+	// allocate result array (in registers)
+	T results[TN*TN] = {0.0};
+
+	// allocate register caches
+	T regACol[TN];
+	T regBRow[TN];
+
+	// outer k loop
+	for (uint k = 0; k < N; k+=BK) {
+		// need to fill shared memory --> want to vectorize this
+		for (uint offset = 0; offset < BN; offset += offsetStrideA) {
+			// sA_T[(threadIdx%BK)*BN + threadIdx/BK + offset] = A[(threadIdx/BK + offset)*N + threadIdx%BK];
+			float4 tmp = reinterpret_cast<const float4 *>(&A[(threadIdx4/BK + offset)*N + threadIdx4%BK])[0];
+			sA_T[((threadIdx4+0)%BK)*BN + (threadIdx4+0)/BK + offset] = tmp.x;
+			sA_T[((threadIdx4+1)%BK)*BN + (threadIdx4+1)/BK + offset] = tmp.y;
+			sA_T[((threadIdx4+2)%BK)*BN + (threadIdx4+2)/BK + offset] = tmp.z;
+			sA_T[((threadIdx4+3)%BK)*BN + (threadIdx4+3)/BK + offset] = tmp.w;
+		}
+		for (uint offset = 0; offset < BK; offset += offsetStrideB) {
+			sB[threadIdx.x + offset*BN] = B[(threadIdx.x/BN + offset)*N + threadIdx.x%BN];
+			reinterpret_cast<float4*>(&sB[threadIdx4 + offset*BN])[0]
+					= reinterpret_cast<const float4*>(&B[(threadIdx4/BN + offset)*N + threadIdx4%BN])[0];
+		}
+		__syncthreads();
+
+		// advance pointers
+		A += BK;
+		B += BK*N;
+
+		// inner k loop
+		for (uint delta_k = 0; delta_k < BK; delta_k++) {
+			// populate registries to save smem accesses
+			for (uint resIdxRow = 0; resIdxRow < TN; resIdxRow++) {
+				regACol[resIdxRow] = sA_T[delta_k*BN + threadRow*TN + resIdxRow];
+			}
+			for (uint resIdxCol = 0; resIdxCol < TN; resIdxCol++) {
+				regBRow[resIdxCol] = sB[delta_k*BN + threadCol*TN + resIdxCol];
+			}
+			for (uint resIdxRow = 0; resIdxRow < TN; resIdxRow++) {
+				for (uint resIdxCol = 0; resIdxCol < TN; resIdxCol++) {
+					results[resIdxRow*TN+resIdxCol] += regACol[resIdxRow] * regBRow[resIdxCol];
+				}
+			}
+		}
+		__syncthreads();
+	}
+	
+	// write results into C
+	for (uint resIdxRow = 0; resIdxRow < TN; resIdxRow++) {
+		for (uint resIdxCol = 0; resIdxCol < TN; resIdxCol+=4) { // skip 3 bc of vectorized stores
+			const uint cIdx = (threadRow*TN + resIdxRow)*N + threadCol*TN + resIdxCol;
+			float4 tmpC = reinterpret_cast<float4*>(&C[cIdx])[0];
+			float4 tmpCNew;
+			tmpCNew.x = alpha*results[resIdxRow*TN + resIdxCol + 0] + beta*tmpC.x;
+			tmpCNew.y = alpha*results[resIdxRow*TN + resIdxCol + 1] + beta*tmpC.y;
+			tmpCNew.z = alpha*results[resIdxRow*TN + resIdxCol + 2] + beta*tmpC.z;
+			tmpCNew.w = alpha*results[resIdxRow*TN + resIdxCol + 3] + beta*tmpC.w;
+			reinterpret_cast<float4*>(&C[cIdx])[0] = tmpCNew;
 		}
 	}
 }

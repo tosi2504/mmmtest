@@ -60,8 +60,8 @@ int main () {
 	std::cout << "STARTED TIMING" << std::endl;
 	timing_start();
 	for (unsigned rep = 0; rep < reps; rep++) {
-		//sgemm_coalesced<float, N, blocksize> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
-		sgemm_sharedmem<float, N, blocksize> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
+		sgemm_coalesced<float, N, blocksize> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
+		//sgemm_sharedmem<float, N, blocksize> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
 		CLCE();
 		CCE(cudaDeviceSynchronize());
 	}

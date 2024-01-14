@@ -17,7 +17,9 @@ Writes: N^2
 MEMORY COALESCING:
 I decided to write the kernels in my own way.
 My naive version already kind of deals with the whole coalesced memory access thingy.
-410 MB/s
+The numbers are:
+	--> 3.7 GB/s
+	--> 943.5 GFLOPS/s
 
 SHARED MEMORY CACHEBLOCKING:
 This is a weird one.
@@ -25,7 +27,8 @@ We need a loop that walks over the blocks and a loop that walks within the block
 I thought I had understood it, but apparently no. 
 My version is much slower than the coalesced one :/
 Actually, after a lot of debugging:
-	--> 480 MB/s
+	--> 5 GB/s
+	--> 1298.5 GFLOPS/s
 Which is still very slow, but I guess thats expected for a flops-bound operation?
 I think I will try the pointer aritmetic magic from the article ... could be neat.
 Actually, it went slower. 
@@ -42,8 +45,25 @@ This is curious.
 Never mind, it is not correct for all ones.
 Never mind, it is correct now. The last line really screwed me over.
 Alright, the numbers are (N=2048):
-	--> 516 MB/s
-	--> 134 GFLOPS/s
+	--> 14 GB/s
+	--> 3564.6 GFLOPS/s
 My notebook gpu has 15.97 TFLOPS/s and 448 GB/s
 I think it might be beneficial to also implement one kernel for variable BM ... lets do that.
 I decided not to do it, since it becomes a bit ugly regarding loading the shared mem
+
+2D BLOCKTILING:
+Implemented and works :) But one needs to setup meson with:
+	$ meson setup build --buildtype=release
+Alright, lets completely redo all the benchmarks.
+For T=float, N=2048:
+	--> 26 GB/s
+	--> 6666.6 GFLOPS/s
+Not too bad ... thats actually like 30% of the total compute power.
+
+VECTORIZED SMEM AND GMEM ACCESSES:
+Okay, lets first transpose sA ... should not be too difficult.
+Actually, it was very simple.
+The benchmarks I will do later.
+Lets continue with the text.
+Alright, so float4 works pretty straight forward.
+It is nice to force GMEM vectorized accesses like that ... could be that my code could profit from that.

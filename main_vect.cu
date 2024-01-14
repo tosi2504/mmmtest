@@ -36,6 +36,7 @@ void checkMatmul(Matrix & C, const Matrix & A, const Matrix & B) {
 	if (not doBreak) std::cout << "No errors" << std::endl;
 }
 
+constexpr unsigned reps = 50;
 constexpr unsigned long N = 2048;
 constexpr uint BN = 128;
 static_assert(N%BN == 0);
@@ -58,11 +59,10 @@ int main () {
 
 	float alpha = 1;
 	float beta = 0;
-	unsigned reps = 50;
 	std::cout << "STARTED TIMING" << std::endl;
 	timing_start();
 	for (unsigned rep = 0; rep < reps; rep++) {
-		sgemm_2D_blocktiling<float, N, BN, BK, TN> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
+		sgemm_vectorized<float, N, BN, BK, TN> <<< gridDim , blockDim >>> (C.d_data, A.d_data, B.d_data, alpha, beta);
 		CLCE();
 		CCE(cudaDeviceSynchronize());
 	}
